@@ -79,9 +79,11 @@ class Environment:
 
             return 1 if winner == player else -1
         else:
-            reward = num_pieces_overturned * 0.01
-            if (r == 0 and c == 0) or (r == 0 and c == 7) or (r == 7 and c == 0) or (r == 7 and c == 7):
+            reward = num_pieces_overturned * 0.01  # number of pieces overturned by its move
+            if (r == 0 and c == 0) or (r == 0 and c == 7) or (r == 7 and c == 0) or (r == 7 and c == 7):  # corner move
                 reward += 0.05
+
+            # TODO: reward based on the number of legal moves gained over the last move
             return reward
 
     def reset(self) -> None:

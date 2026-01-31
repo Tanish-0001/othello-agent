@@ -151,5 +151,5 @@ class Agent:
                 self.target_model.load_state_dict(self.model.state_dict())
 
 
-agent = Agent(batch_size=128, lr=0.0001)
+agent = Agent(batch_size=128, lr=1e-4)
 agent.train()
