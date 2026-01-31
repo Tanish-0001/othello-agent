@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import StepLR
 from collections import deque
+import json
 
 
 class Agent:
@@ -32,6 +33,9 @@ class Agent:
 
         self.snapshot = OthelloPlayer()
         self.snapshot.load_state_dict(self.model.state_dict())
+        self.snapshot.to(self.device)
+
+        self.logs = {"random": [], "itself": []}
 
     def action(self, state, legal_moves, version="new"):
         if version == "new":
@@ -118,6 +122,8 @@ class Agent:
                 rl_score += 0.5
             else:
                 pass
+
+        self.logs["random"].append((rl_score) / episodes)
         print("RL Win rate: ", (rl_score / episodes) * 100, "%")
     
     def eval_against_snapshot(self):
@@ -150,13 +156,17 @@ class Agent:
                 rl_score += 0.5
             else:
                 pass
+
+        self.logs["itself"].append((rl_score) / 10)
         print("RL Win rate against itself: ", (rl_score / 10) * 100, "%")
 
-    def train(self):
+    def train(self, num_episodes=20000):
+        print(f"Training on {self.device}.")
+
         losses = []
         env = Environment()
         loss = 0.0
-        for ep in range(1, 20_001):
+        for ep in range(1, num_episodes + 1):
             env.reset()
 
             num_random_moves = random.randint(0, int(ep / 500))
@@ -168,31 +178,62 @@ class Agent:
                 self.epsilon = max(self.epsilon * 0.99, 0.08)
                 self.evaluate(50)
                 self.eval_against_snapshot()
-            
-            if ep % 2000:
+
+            if ep % 2000 == 0:
                 self.snapshot.load_state_dict(self.model.state_dict())
 
             game = env.game
+            
+            # Pending transitions for each player: {player_id: (state, action, reward)}
+            pending = {1: None, -1: None}
+
             while not game.is_game_over():
-                state = env.get_state()
+                current_player = game.current_turn
                 legal_moves = game.get_legal_moves()
+                
+                # Handle no legal moves - turn passes to opponent
                 if len(legal_moves) == 0:
                     game.current_turn *= -1
                     continue
 
+                state = env.get_state()
+                
+                # Complete the previous pending transition for this player
+                # This works correctly even if this player just moved (consecutive turns)
+                # because `state` is what they see now before their next action
+                if pending[current_player] is not None:
+                    prev_state, prev_action, prev_reward = pending[current_player]
+                    self.memory.append((prev_state, prev_action, prev_reward, state, 0))
+
                 action = self.action(state, legal_moves)
-
                 next_state, reward, done = env.step(action=action)
-                if done:
-                    next_state = None
 
-                self.memory.append((state, action, reward, next_state, done))
+                # Store this player's transition as pending
+                pending[current_player] = (state, action, reward)
+
+            # Game is over - finalize pending transitions
+            game_result = game.get_winner_id()
+            for player_id in [1, -1]:
+                if pending[player_id] is not None:
+                    prev_state, prev_action, _ = pending[player_id]
+                    # Final reward based on game outcome
+                    if game_result == player_id:
+                        final_reward = 1.0
+                    elif game_result == 0:
+                        final_reward = 0.0
+                    else:
+                        final_reward = -1.0
+                    self.memory.append((prev_state, prev_action, final_reward, None, 1))
 
             loss = self.replay()
+            losses.append(loss)
 
             if ep % 10 == 0:
                 self.target_model.load_state_dict(self.model.state_dict())
+        
+        with open("training_logs.json", "w") as f:
+            json.dump(self.logs, f, indent=2)
 
 
 agent = Agent(batch_size=128, lr=1e-4)
-agent.train()
+agent.train(num_episodes=20000)
