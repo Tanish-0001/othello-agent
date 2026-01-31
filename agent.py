@@ -30,13 +30,21 @@ class Agent:
         self.model.to(self.device)
         self.target_model.to(self.device)
 
-    def action(self, state, legal_moves):
-        if random.random() < self.epsilon and len(legal_moves) > 0:
-            move_index = (random.choice(legal_moves))
-            return 8 * move_index[0] + move_index[1]
+        self.snapshot = OthelloPlayer()
+        self.snapshot.load_state_dict(self.model.state_dict())
+
+    def action(self, state, legal_moves, version="new"):
+        if version == "new":
+            model = self.model
+
+            if random.random() < self.epsilon and len(legal_moves) > 0:
+                move_index = (random.choice(legal_moves))
+                return 8 * move_index[0] + move_index[1]
+        else:
+            model = self.snapshot
 
         tensor_t = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
-        q_values = self.model(tensor_t).squeeze(0).cpu().detach().numpy()
+        q_values = model(tensor_t).squeeze(0).cpu().detach().numpy()
 
         mask = np.full(q_values.shape, -np.inf)
         for r, c in legal_moves:
@@ -111,6 +119,38 @@ class Agent:
             else:
                 pass
         print("RL Win rate: ", (rl_score / episodes) * 100, "%")
+    
+    def eval_against_snapshot(self):
+        test_env = Environment()
+        rl_score = 0
+        for ep in range(10):
+            test_env.reset()
+            test_game = test_env.game
+            # print(ep)
+            rl_player = 1 if ep % 2 == 0 else -1
+            while not test_game.is_game_over():
+                state = test_env.get_state()
+                legal_moves = test_game.get_legal_moves()
+
+                if len(legal_moves) == 0:
+                    test_game.current_turn *= -1
+                    legal_moves = test_game.get_legal_moves()
+
+                if test_game.current_turn == rl_player:
+                    action = self.action(state, legal_moves)
+                else:
+                    action = self.action(state, legal_moves, "old")
+
+                test_env.step(action=action)
+
+            winner = test_game.get_winner_id()
+            if winner == rl_player:
+                rl_score += 1
+            elif winner == 0:
+                rl_score += 0.5
+            else:
+                pass
+        print("RL Win rate against itself: ", (rl_score / 10) * 100, "%")
 
     def train(self):
         losses = []
@@ -119,15 +159,18 @@ class Agent:
         for ep in range(1, 20_001):
             env.reset()
 
-            if ep > 2000:
-                num_random_moves = random.randint(0, 20)
-                env.play_random_moves(num_random_moves)
+            num_random_moves = random.randint(0, int(ep / 500))
+            env.play_random_moves(num_random_moves)
 
             if ep % 10 == 0:
                 print(f"Episode: {ep}, Loss: {loss}")
             if ep % 50 == 0:
                 self.epsilon = max(self.epsilon * 0.99, 0.08)
                 self.evaluate(50)
+                self.eval_against_snapshot()
+            
+            if ep % 2000:
+                self.snapshot.load_state_dict(self.model.state_dict())
 
             game = env.game
             while not game.is_game_over():

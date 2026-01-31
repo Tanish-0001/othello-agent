@@ -20,7 +20,7 @@ class ResidualBlock(nn.Module):
 
 
 class OthelloPlayer(nn.Module):
-    def __init__(self, in_channels=3, base_channels=64, num_blocks=4, hidden_dim=1024):
+    def __init__(self, in_channels=3, base_channels=64, num_blocks=8, hidden_dim=1024):
         """
         ResNet-based DQN for Othello.
 
@@ -44,9 +44,15 @@ class OthelloPlayer(nn.Module):
         self.q_score = nn.Sequential(
             nn.Linear(base_channels * 8 * 8, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 128),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(128, 64)  # 64 Q-values (8x8 board)
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 64)  # 64 Q-values (8x8 board)
         )
 
     def forward(self, x):
@@ -56,3 +62,9 @@ class OthelloPlayer(nn.Module):
         x = self.flatten(x)
         x = self.q_score(x)
         return x
+
+
+if __name__ == "__main__":
+    model = OthelloPlayer()
+    total = sum(p.numel() for p in model.parameters())
+    print(total)
