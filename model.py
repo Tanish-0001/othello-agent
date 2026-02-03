@@ -20,7 +20,13 @@ class ResidualBlock(nn.Module):
 
 
 class OthelloPlayer(nn.Module):
-    def __init__(self, in_channels=3, base_channels=64, num_blocks=8, hidden_dim=1024):
+    def __init__(
+            self, 
+            in_channels=3, 
+            base_channels=64, 
+            num_blocks=8, 
+            hidden_dim=1024,
+        ):
         """
         ResNet-based DQN for Othello.
 
@@ -41,18 +47,24 @@ class OthelloPlayer(nn.Module):
 
         # Fully connected head
         self.flatten = nn.Flatten()
-        self.q_score = nn.Sequential(
+        # self.q_score = nn.Sequential(
+        #     nn.Linear(base_channels * 8 * 8, hidden_dim),
+        #     nn.ReLU(),
+        #     nn.Linear(hidden_dim, hidden_dim),
+        #     nn.ReLU(),
+        #     nn.Linear(hidden_dim, 64)  # 64 Q-values (8x8 board)
+        # )
+
+        self.value = nn.Sequential(
             nn.Linear(base_channels * 8 * 8, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(hidden_dim, 1)
+        )
+
+        self.advantage = nn.Sequential(
+            nn.Linear(base_channels * 8 * 8, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 64)  # 64 Q-values (8x8 board)
+            nn.Linear(hidden_dim, 64)
         )
 
     def forward(self, x):
@@ -60,8 +72,12 @@ class OthelloPlayer(nn.Module):
         x = F.relu(self.bn_in(self.conv_in(x)))
         x = self.res_blocks(x)
         x = self.flatten(x)
-        x = self.q_score(x)
-        return x
+
+        value = self.value(x)
+        advantage = self.advantage(x)
+        
+        q_values = value + (advantage - advantage.mean(dim=1, keepdim=True))
+        return q_values
 
 
 if __name__ == "__main__":

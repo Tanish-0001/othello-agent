@@ -11,12 +11,14 @@ import json
 
 
 class Agent:
-    def __init__(self, gamma=0.999, epsilon=1.0, lr=0.001, max_memory=10_000, batch_size=32):
+    def __init__(self, gamma=0.999, epsilon=0.9, lr=0.001, max_memory=10_000, batch_size=32):
         self.gamma = gamma
         self.epsilon = epsilon
         self.lr = lr
         self.batch_size = batch_size
         self.memory = deque(maxlen=max_memory)
+
+        self.min_epsilon = 0.1
 
         self.model = OthelloPlayer()
         self.target_model = OthelloPlayer()
@@ -24,7 +26,7 @@ class Agent:
         self.target_model.eval()
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        # self.scheduler = StepLR(optimizer=self.optimizer,step_size=5000,gamma=0.05)
+        self.scheduler = StepLR(optimizer=self.optimizer, step_size=10000, gamma=0.5)
         self.loss_func = nn.MSELoss()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -34,14 +36,15 @@ class Agent:
         self.snapshot = OthelloPlayer()
         self.snapshot.load_state_dict(self.model.state_dict())
         self.snapshot.to(self.device)
+        self.snapshot.eval()
 
-        self.logs = {"random": [], "itself": []}
+        self.logs = {"against_random_player": [], "against_snapshot": []}
 
-    def action(self, state, legal_moves, version="new"):
+    def action(self, state, legal_moves, use_epsilon_greedy = False, version="new"):
         if version == "new":
             model = self.model
 
-            if random.random() < self.epsilon and len(legal_moves) > 0:
+            if use_epsilon_greedy and random.random() < self.epsilon and len(legal_moves) > 0:
                 move_index = (random.choice(legal_moves))
                 return 8 * move_index[0] + move_index[1]
         else:
@@ -88,13 +91,14 @@ class Agent:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        # self.scheduler.step()
+        self.scheduler.step()
         return loss.item()
 
-    def evaluate(self, episodes):
+    def evaluate(self, num_trials=50):
+        self.model.eval()
         test_env = Environment()
         rl_score = 0
-        for ep in range(episodes):
+        for ep in range(num_trials):
             test_env.reset()
             test_game = test_env.game
             # print(ep)
@@ -123,13 +127,14 @@ class Agent:
             else:
                 pass
 
-        self.logs["random"].append((rl_score) / episodes)
-        print("RL Win rate: ", (rl_score / episodes) * 100, "%")
+        self.logs["against_random_player"].append((rl_score) / num_trials)
+        print("Win rate againt random player: ", (rl_score / num_trials) * 100, "%")
     
-    def eval_against_snapshot(self):
+    def eval_against_snapshot(self, num_trials=50):
+        self.model.eval()
         test_env = Environment()
         rl_score = 0
-        for ep in range(10):
+        for ep in range(num_trials):
             test_env.reset()
             test_game = test_env.game
             # print(ep)
@@ -157,8 +162,8 @@ class Agent:
             else:
                 pass
 
-        self.logs["itself"].append((rl_score) / 10)
-        print("RL Win rate against itself: ", (rl_score / 10) * 100, "%")
+        self.logs["against_snapshot"].append((rl_score) / num_trials)
+        print("Win rate against itself: ", (rl_score / num_trials) * 100, "%")
 
     def train(self, num_episodes=20000):
         print(f"Training on {self.device}.")
@@ -171,22 +176,21 @@ class Agent:
 
             num_random_moves = random.randint(0, int(ep / 500))
             env.play_random_moves(num_random_moves)
-
-            if ep % 10 == 0:
-                print(f"Episode: {ep}, Loss: {loss}")
+                
             if ep % 50 == 0:
-                self.epsilon = max(self.epsilon * 0.99, 0.08)
+                self.epsilon = max(self.epsilon * 0.99, self.min_epsilon)
+                print(f"Episode: {ep}, Loss: {loss}")
                 self.evaluate(50)
-                self.eval_against_snapshot()
+                self.eval_against_snapshot(50)
 
-            if ep % 2000 == 0:
+            if ep % 5000 == 0:
                 self.snapshot.load_state_dict(self.model.state_dict())
 
             game = env.game
             
             # Pending transitions for each player: {player_id: (state, action, reward)}
             pending = {1: None, -1: None}
-
+            self.model.train()
             while not game.is_game_over():
                 current_player = game.current_turn
                 legal_moves = game.get_legal_moves()
@@ -205,7 +209,7 @@ class Agent:
                     prev_state, prev_action, prev_reward = pending[current_player]
                     self.memory.append((prev_state, prev_action, prev_reward, state, 0))
 
-                action = self.action(state, legal_moves)
+                action = self.action(state, legal_moves, use_epsilon_greedy=True)
                 next_state, reward, done = env.step(action=action)
 
                 # Store this player's transition as pending
@@ -228,12 +232,13 @@ class Agent:
             loss = self.replay()
             losses.append(loss)
 
-            if ep % 10 == 0:
+            if ep % 500 == 0:
                 self.target_model.load_state_dict(self.model.state_dict())
         
+        torch.save(self.model.state_dict(), "othello_dqn_model.pt")
         with open("training_logs.json", "w") as f:
             json.dump(self.logs, f, indent=2)
 
 
-agent = Agent(batch_size=128, lr=1e-4)
-agent.train(num_episodes=20000)
+agent = Agent(batch_size=256, lr=1e-4)
+agent.train(num_episodes=50000)

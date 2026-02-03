@@ -85,14 +85,23 @@ class Othello:
         return 1 if np.sum(self.board) > 0 else 0 if np.sum(self.board) == 0 else -1
 
     def get_input(self) -> torch.Tensor:
-        game_state = torch.tensor(self.board, dtype=torch.float32)
+        # Canonical representation:
+        # Channel 0: My pieces (always 1s for current player's pieces)
+        # Channel 1: Opponent pieces (always 1s for opponent's pieces)
+        # Channel 2: Legal moves
+        
+        my_pieces = (self.board == self.current_turn).astype(np.float32)
+        opp_pieces = (self.board == -self.current_turn).astype(np.float32)
 
-        legal_moves = torch.zeros((8, 8), dtype=torch.float32)
-        for row, col in self.get_legal_moves(): legal_moves[row][col] = 1.0
+        legal_moves_tensor = torch.zeros((8, 8), dtype=torch.float32)
+        for row, col in self.get_legal_moves(): 
+            legal_moves_tensor[row][col] = 1.0
 
-        current_player = torch.full((8, 8), self.current_turn, dtype=torch.float32)
-
-        input_tensor = torch.stack([game_state, legal_moves, current_player])
+        input_tensor = torch.stack([
+            torch.tensor(my_pieces),
+            torch.tensor(opp_pieces),
+            legal_moves_tensor
+        ])
         return input_tensor
 
     def display_board(self):
