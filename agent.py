@@ -11,7 +11,14 @@ import json
 
 
 class Agent:
-    def __init__(self, gamma=0.999, epsilon=0.9, lr=0.001, max_memory=10_000, batch_size=32):
+    def __init__(
+            self, 
+            gamma=0.999, 
+            epsilon=0.9, 
+            lr=0.001, 
+            max_memory=10_000, 
+            batch_size=32
+        ):
         self.gamma = gamma
         self.epsilon = epsilon
         self.lr = lr
@@ -40,11 +47,14 @@ class Agent:
 
         self.logs = {"against_random_player": [], "against_snapshot": []}
 
-    def action(self, state, legal_moves, use_epsilon_greedy = False, version="new"):
+    def action(self, state, legal_moves, use_epsilon_greedy=False, version="new"):
+        if len(legal_moves) == 0:
+            raise ValueError("No legal moves available to select an action.")
+
         if version == "new":
             model = self.model
 
-            if use_epsilon_greedy and random.random() < self.epsilon and len(legal_moves) > 0:
+            if use_epsilon_greedy and random.random() < self.epsilon:
                 move_index = (random.choice(legal_moves))
                 return 8 * move_index[0] + move_index[1]
         else:
@@ -53,13 +63,10 @@ class Agent:
         tensor_t = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
         q_values = model(tensor_t).squeeze(0).cpu().detach().numpy()
 
-        mask = np.full(q_values.shape, -np.inf)
-        for r, c in legal_moves:
-            idx = 8 * r + c
-            mask[idx] = 0.0
+        mask = state[2, :, :].reshape(64,).numpy()  # legal moves channel
+        q_values[mask == 0] = -np.inf  # set illegal moves q score to -inf
 
-        masked_q_values = q_values + mask
-        return int(np.argmax(masked_q_values))
+        return int(np.argmax(q_values))
 
     def replay(self) -> float:
         if len(self.memory) < self.batch_size:
@@ -77,12 +84,17 @@ class Agent:
 
         q_next = torch.zeros(self.batch_size, device=self.device)
 
-        non_terminal_mask = (dones == 0)
+        non_terminal_mask = (dones_tensor == 0)
         non_terminal_next_states = [s for s in next_states if s is not None]
 
         if non_terminal_next_states:
             non_terminal_next_states = torch.stack(non_terminal_next_states).to(self.device)
-            q_next[non_terminal_mask] = self.target_model(non_terminal_next_states).detach().max(1)[0]
+            legal_move_mask = non_terminal_next_states[:, 2, :, :].reshape(-1, 64)  # last channel of each state is the legal moves for that state
+
+            outputs = self.target_model(non_terminal_next_states)
+            outputs[legal_move_mask == 0] = -torch.inf  # set illegal moves target q score to -inf
+
+            q_next[non_terminal_mask] = outputs.detach().max(1)[0]
 
         q_target = rewards_tensor + (self.gamma * q_next * (1 - dones_tensor))
 
@@ -128,7 +140,7 @@ class Agent:
                 pass
 
         self.logs["against_random_player"].append((rl_score) / num_trials)
-        print("Win rate againt random player: ", (rl_score / num_trials) * 100, "%")
+        print("Win rate against random player: ", (rl_score / num_trials) * 100, "%")
     
     def eval_against_snapshot(self, num_trials=50):
         self.model.eval()
@@ -137,8 +149,7 @@ class Agent:
         for ep in range(num_trials):
             test_env.reset()
             test_game = test_env.game
-            # print(ep)
-            rl_player = 1 if ep % 2 == 0 else -1
+            rl_player = 1 if ep % 2 == 0 else -1  # alternate as white and black
             while not test_game.is_game_over():
                 state = test_env.get_state()
                 legal_moves = test_game.get_legal_moves()
@@ -150,7 +161,7 @@ class Agent:
                 if test_game.current_turn == rl_player:
                     action = self.action(state, legal_moves)
                 else:
-                    action = self.action(state, legal_moves, "old")
+                    action = self.action(state, legal_moves, version="old")
 
                 test_env.step(action=action)
 
@@ -239,6 +250,10 @@ class Agent:
         with open("training_logs.json", "w") as f:
             json.dump(self.logs, f, indent=2)
 
-
-agent = Agent(batch_size=256, lr=1e-4)
-agent.train(num_episodes=50000)
+try:
+    agent = Agent(batch_size=256, lr=1e-4, max_memory=100_000)
+    agent.train(num_episodes=50_000)
+except KeyboardInterrupt:
+    torch.save(agent.model.state_dict(), "othello_dqn_model_interrupted.pt")
+    with open("training_logs.json", "w") as f:
+            json.dump(agent.logs, f, indent=2)

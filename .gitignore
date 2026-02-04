@@ -4,3 +4,4 @@ __pycache__/
 *.pt
 *.pth
 training_logs.json
+*.mp4
