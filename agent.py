@@ -13,7 +13,7 @@ import json
 class Agent:
     def __init__(
             self, 
-            gamma=0.999, 
+            gamma=0.99, 
             epsilon=0.9, 
             lr=0.001, 
             max_memory=10_000, 
@@ -102,6 +102,9 @@ class Agent:
 
         self.optimizer.zero_grad()
         loss.backward()
+
+        nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
+
         self.optimizer.step()
         self.scheduler.step()
         return loss.item()
