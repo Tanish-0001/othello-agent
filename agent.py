@@ -17,13 +17,15 @@ class Agent:
             epsilon=0.9, 
             lr=0.001, 
             max_memory=10_000, 
-            batch_size=32
+            batch_size=128
         ):
         self.gamma = gamma
         self.epsilon = epsilon
         self.lr = lr
         self.batch_size = batch_size
         self.memory = deque(maxlen=max_memory)
+
+        self.TRAIN_EVERY = 8  # Train every N moves
 
         self.min_epsilon = 0.1
 
@@ -33,7 +35,7 @@ class Agent:
         self.target_model.eval()
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        self.scheduler = StepLR(optimizer=self.optimizer, step_size=10000, gamma=0.5)
+        self.scheduler = StepLR(optimizer=self.optimizer, step_size=75_000, gamma=0.5)
         self.loss_func = nn.MSELoss()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -60,7 +62,9 @@ class Agent:
         else:
             model = self.snapshot
 
-        tensor_t = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
+        model.eval()
+
+        tensor_t = state.unsqueeze(0).to(self.device)
         q_values = model(tensor_t).squeeze(0).cpu().detach().numpy()
 
         mask = state[2, :, :].reshape(64,).numpy()  # legal moves channel
@@ -71,30 +75,41 @@ class Agent:
     def replay(self) -> float:
         if len(self.memory) < self.batch_size:
             return -1.0
+        
+        self.model.train()
+        self.target_model.eval()
 
         batch = random.sample(self.memory, self.batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
-        states_tensor = torch.tensor(np.stack(states), dtype=torch.float32, device=self.device)
+        states_tensor = torch.stack(states).to(self.device)
         actions_tensor = torch.tensor(actions, dtype=torch.long, device=self.device)
         rewards_tensor = torch.tensor(rewards, dtype=torch.float32, device=self.device)
         dones_tensor = torch.tensor(dones, dtype=torch.float32, device=self.device)
 
+        # Q values predicted by model for the actions taken in the current states
         q_value = self.model(states_tensor)
         q_predicted = q_value.gather(1, actions_tensor.unsqueeze(1)).squeeze(1)
 
+        # Q values predicted by model for the next states
         q_next = torch.zeros(self.batch_size, device=self.device)
 
-        non_terminal_mask = (dones_tensor == 0)
-        non_terminal_next_states = [s for s in next_states if s is not None]
+        with torch.no_grad():
+            non_terminal_mask = (dones_tensor == 0)
+            non_terminal_next_states = [s for s in next_states if s is not None]
 
-        if non_terminal_next_states:
-            non_terminal_next_states = torch.stack(non_terminal_next_states).to(self.device)
-            legal_move_mask = non_terminal_next_states[:, 2, :, :].reshape(-1, 64)  # last channel of each state is the legal moves for that state
+            if non_terminal_next_states:
+                non_terminal_next_states = torch.stack(non_terminal_next_states).to(self.device)
+                legal_move_mask = non_terminal_next_states[:, 2, :, :].reshape(-1, 64)  # last channel of each state is the legal moves for that state
 
-            outputs = self.target_model(non_terminal_next_states)
-            outputs[legal_move_mask == 0] = -torch.inf  # set illegal moves target q score to -inf
+                # find the best actions according the online model
+                online_q_next = self.model(non_terminal_next_states).detach()
+                online_q_next[legal_move_mask == 0] = -torch.inf  # set illegal moves target q score to -inf
 
-            q_next[non_terminal_mask] = outputs.detach().max(1)[0]
+                best_actions = online_q_next.argmax(1).unsqueeze(1)
+                
+                # find the q values of those best actions according to the target model
+                outputs = self.target_model(non_terminal_next_states).detach()
+                q_next[non_terminal_mask] = outputs.gather(1, best_actions).squeeze(1)
 
         q_target = rewards_tensor + (self.gamma * q_next * (1 - dones_tensor))
 
@@ -179,10 +194,9 @@ class Agent:
         self.logs["against_snapshot"].append((rl_score) / num_trials)
         print("Win rate against itself: ", (rl_score / num_trials) * 100, "%")
 
-    def train(self, num_episodes=20000):
+    def train(self, num_episodes=20_000):
         print(f"Training on {self.device}.")
 
-        losses = []
         env = Environment()
         loss = 0.0
         for ep in range(1, num_episodes + 1):
@@ -204,7 +218,7 @@ class Agent:
             
             # Pending transitions for each player: {player_id: (state, action, reward)}
             pending = {1: None, -1: None}
-            self.model.train()
+            num_moves = 0
             while not game.is_game_over():
                 current_player = game.current_turn
                 legal_moves = game.get_legal_moves()
@@ -225,9 +239,13 @@ class Agent:
 
                 action = self.action(state, legal_moves, use_epsilon_greedy=True)
                 next_state, reward, done = env.step(action=action)
+                num_moves += 1
 
                 # Store this player's transition as pending
                 pending[current_player] = (state, action, reward)
+
+                if num_moves % self.TRAIN_EVERY == 0:
+                    _ = self.replay()
 
             # Game is over - finalize pending transitions
             game_result = game.get_winner_id()
@@ -244,7 +262,6 @@ class Agent:
                     self.memory.append((prev_state, prev_action, final_reward, None, 1))
 
             loss = self.replay()
-            losses.append(loss)
 
             if ep % 500 == 0:
                 self.target_model.load_state_dict(self.model.state_dict())
