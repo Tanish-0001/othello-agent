@@ -49,20 +49,13 @@ class Agent:
 
         self.logs = {"against_random_player": [], "against_snapshot": []}
 
-    def action(self, state, legal_moves, use_epsilon_greedy=False, version="new"):
+    def action(self, state, legal_moves, model, use_epsilon_greedy=False, version="new"):
         if len(legal_moves) == 0:
             raise ValueError("No legal moves available to select an action.")
 
-        if version == "new":
-            model = self.model
-
-            if use_epsilon_greedy and random.random() < self.epsilon:
-                move_index = (random.choice(legal_moves))
-                return 8 * move_index[0] + move_index[1]
-        else:
-            model = self.snapshot
-
-        model.eval()
+        if use_epsilon_greedy and random.random() < self.epsilon:
+            move_index = (random.choice(legal_moves))
+            return 8 * move_index[0] + move_index[1]
 
         tensor_t = state.unsqueeze(0).to(self.device)
         q_values = model(tensor_t).squeeze(0).cpu().detach().numpy()
@@ -142,7 +135,7 @@ class Agent:
                     legal_moves = test_game.get_legal_moves()
 
                 if test_game.current_turn == rl_player:
-                    action = self.action(state, legal_moves)
+                    action = self.action(state, legal_moves, model=self.model, use_epsilon_greedy=False)
                 else:
                     move_index = (random.choice(legal_moves))
                     action = 8 * move_index[0] + move_index[1]
@@ -162,12 +155,16 @@ class Agent:
     
     def eval_against_snapshot(self, num_trials=50):
         self.model.eval()
+        self.snapshot.eval()
+
         test_env = Environment()
+        
         rl_score = 0
         for ep in range(num_trials):
             test_env.reset()
             test_game = test_env.game
             rl_player = 1 if ep % 2 == 0 else -1  # alternate as white and black
+
             while not test_game.is_game_over():
                 state = test_env.get_state()
                 legal_moves = test_game.get_legal_moves()
@@ -177,9 +174,9 @@ class Agent:
                     legal_moves = test_game.get_legal_moves()
 
                 if test_game.current_turn == rl_player:
-                    action = self.action(state, legal_moves)
+                    action = self.action(state, legal_moves, model=self.model, use_epsilon_greedy=False)
                 else:
-                    action = self.action(state, legal_moves, version="old")
+                    action = self.action(state, legal_moves, model=self.snapshot, use_epsilon_greedy=False, version="old")
 
                 test_env.step(action=action)
 
@@ -237,7 +234,7 @@ class Agent:
                     prev_state, prev_action, prev_reward = pending[current_player]
                     self.memory.append((prev_state, prev_action, prev_reward, state, 0))
 
-                action = self.action(state, legal_moves, use_epsilon_greedy=True)
+                action = self.action(state, legal_moves, model=self.model, use_epsilon_greedy=True)
                 next_state, reward, done = env.step(action=action)
                 num_moves += 1
 
