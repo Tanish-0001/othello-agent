@@ -118,6 +118,5 @@ for epoch in range(3):
             print(f"Epoch {epoch} | Batch {i} | Total Loss: {totalLoss.item():.4f}")
 
 # Save the model after training
-torch.save(resnet.state_dict(), 'othello_supervised.pth')
+torch.save(resnet.state_dict(), 'othello_supervised.pt')
 print("Training Complete. Model saved.")
-
