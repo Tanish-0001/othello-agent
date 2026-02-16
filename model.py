@@ -49,6 +49,13 @@ class OthelloPlayer(nn.Module):
         # Fully connected head
         self.flatten = nn.Flatten()
 
+        # classifier head for supervised learning
+        self.classifier = nn.Sequential(
+            nn.Linear(base_channels * 8 * 8, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 64)
+        )
+
         # Value head and Advantage head for Dueling DQN architecture
         # Value head learns to predict the overall value of the state.
         self.value = nn.Sequential(
@@ -64,17 +71,20 @@ class OthelloPlayer(nn.Module):
             nn.Linear(hidden_dim, 64)
         )
 
-    def forward(self, x):
+    def forward(self, x, supervised=False):
         # x shape: (batch, in_channels, 8, 8)
         x = F.relu(self.gn_in(self.conv_in(x)))
         x = self.res_blocks(x)
         x = self.flatten(x)
 
-        value = self.value(x)
-        advantage = self.advantage(x)
+        if supervised:
+            return self.classifier(x)
+        else:
+            value = self.value(x)
+            advantage = self.advantage(x)
 
-        q_values = value + (advantage - advantage.mean(dim=1, keepdim=True))
-        return q_values
+            q_values = value + (advantage - advantage.mean(dim=1, keepdim=True))
+            return q_values
 
 
 if __name__ == "__main__":
