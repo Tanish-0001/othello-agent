@@ -71,12 +71,13 @@ class Agent:
         self.model.to(self.device)
         self.target_model.to(self.device)
 
-        self.snapshot = OthelloPlayer()
-        self.snapshot.load_state_dict(self.model.state_dict())
-        self.snapshot.to(self.device)
-        self.snapshot.eval()
+        self.snapshot_tracker = SnapshotTracker(self.device)
 
-        self.logs = {"against_random_player": [], "against_snapshot": []}
+        self.logs = {
+            "against_random_player": [],
+            "against_all_snapshots": []
+        }
+
 
     def action(self, state, legal_moves, model, use_epsilon_greedy=False, version="new"):
         if len(legal_moves) == 0:
@@ -272,7 +273,7 @@ class Agent:
                 self.epsilon = max(self.epsilon * 0.99, self.min_epsilon)
                 print(f"Episode: {ep}, Loss: {loss}")
                 self.evaluate(50)
-                self.eval_against_snapshot(50)
+                self.eval_against_snapshot(2)
 
             if ep % 5000 == 0:
                 self.snapshot.load_state_dict(self.model.state_dict())
