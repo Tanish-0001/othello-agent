@@ -87,7 +87,7 @@ class supervisedDataloader (Dataset):
 
         
 othelloDataLoader = supervisedDataloader('./othello_dataset.csv')
-trainLoader = torch.utils.data.DataLoader(othelloDataLoader, batch_size=64, shuffle=True)
+trainLoader = torch.utils.data.DataLoader(othelloDataLoader, batch_size=256, shuffle=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 resnet = model.OthelloPlayer().to(device)
@@ -97,29 +97,27 @@ resnet = model.OthelloPlayer().to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(resnet.parameters(), lr=0.0001)   
 
-for epoch in range(4):
+for epoch in range(3):
     resnet.train()
     for i, (states, actions, winners) in enumerate(trainLoader):
         states, actions, winners = states.to(device), actions.to(device), winners.to(device).float().view(-1, 1)
-
+        winMask = (winners > 0).flatten()
         optimizer.zero_grad()
 
-        outputs = resnet(states, supervised = True)
-
-        winMask = (winners > 0).flatten()
         if winMask.any():
-            loss = criterion(outputs[winMask], actions[winMask])
-        else:
-            loss = 0.0
 
-        totalLoss = loss
-        totalLoss.backward()
-        optimizer.step()
+            outputs = resnet(states[winMask], supervised = True)
+            loss = criterion(outputs[winMask], actions[winMask])
+            totalLoss = loss
+            totalLoss.backward()
+            optimizer.step()
+        
+
+        
         if i % 50 == 0:
             print(f"Epoch {epoch} | Batch {i} | Total Loss: {totalLoss.item():.4f}")
 
 # Save the model after training
 torch.save(resnet.state_dict(), 'othello_supervised.pth')
 print("Training Complete. Model saved.")
-
 
