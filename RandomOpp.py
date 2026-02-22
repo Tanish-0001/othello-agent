@@ -4,7 +4,7 @@ from game import Environment
 from model import OthelloPlayer
 import random
 
-def evaluate_against_random(model, num_games=100, verbose=False):
+def evaluate_against_random(model, num_games=100, verbose=False, supervised=False):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
     
@@ -31,7 +31,7 @@ def evaluate_against_random(model, num_games=100, verbose=False):
                 # AI's Turn
                 state = env.get_state().unsqueeze(0).to(device)
                 with torch.no_grad():
-                    q_values = model(state).squeeze(0).cpu().numpy()
+                    q_values = model(state, supervised=supervised).squeeze(0).cpu().numpy()
                 
                 # Pick the best legal move
                 best_q = -np.inf

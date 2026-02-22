@@ -90,8 +90,6 @@ trainLoader = torch.utils.data.DataLoader(othelloDataLoader, batch_size=256, shu
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 resnet = model.OthelloPlayer().to(device)
 
-# criterionValue = nn.MSELoss()
-# criterionAdvantage = nn.CrossEntropyLoss()
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(resnet.parameters(), lr=0.0001)   
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", patience=2, factor=0.1, min_lr=1e-6)
@@ -118,7 +116,7 @@ for epoch in range(10):
 
     resnet.eval()
     with torch.no_grad():
-        wr = evaluate_against_random(resnet, 100, False)
+        wr = evaluate_against_random(resnet, 100, False, supervised=True)
 
     if wr > best_wr:
         best_wr = wr
@@ -128,4 +126,4 @@ for epoch in range(10):
 
 # Save the model after training
 torch.save(resnet.state_dict(), 'othello_supervised_final.pt')
-print("Training Complete. Model saved. Best win rate: " + best_wr)
+print(f"Training Complete. Model saved. Best win rate: {best_wr}")
