@@ -85,5 +85,5 @@ def evaluate_against_random(model_path="othello_dqn_model_interrupted.pt", num_g
     print("="*30)
 
 if __name__ == "__main__":
-    # evaluate_against_random(model_path="othello_dqn_model.pt", num_games=1000)
+    #evaluate_against_random(model_path="othello_dqn_model.pt", num_games=1000)
     evaluate_against_random(model_path="othello_supervised.pth", num_games=500)
