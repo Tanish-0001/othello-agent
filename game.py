@@ -23,8 +23,8 @@ class Environment:
 
         Parameters
         ----------
-        action : tuple of int
-            The (row, column) coordinates where the agent places a piece.
+        action : int
+            action = 8 * row + col, coordinates where the agent places a piece.
 
         Returns
         -------

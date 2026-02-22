@@ -4,19 +4,8 @@ from game import Environment
 from model import OthelloPlayer
 import random
 
-def evaluate_against_random(model_path="othello_dqn_model_interrupted.pt", num_games=100):
+def evaluate_against_random(model, num_games=100, verbose=False):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # Load the model
-    model = OthelloPlayer()
-    try:
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        print(f"Successfully loaded model from {model_path}")
-    except FileNotFoundError:
-        print(f"Error: {model_path} not found. Ensure you have a trained model file.")
-        return
-
-    model.to(device)
     model.eval()
     
     env = Environment()
@@ -73,17 +62,30 @@ def evaluate_against_random(model_path="othello_dqn_model_interrupted.pt", num_g
 
     # Final Report
     win_rate = (stats["wins"] / num_games) * 100
-    print("\n" + "="*30)
-    print("EVALUATION REPORT")
-    print("="*30)
-    print(f"Model: {model_path}")
-    print(f"Total Games: {num_games}")
-    print(f"Wins:   {stats['wins']}")
-    print(f"Losses: {stats['losses']}")
-    print(f"Draws:  {stats['draws']}")
-    print(f"Win Rate: {win_rate:.2f}%")
-    print("="*30)
+
+    if verbose:
+        print("\n" + "="*30)
+        print("EVALUATION REPORT")
+        print("="*30)
+        print(f"Model: {model_path}")
+        print(f"Total Games: {num_games}")
+        print(f"Wins:   {stats['wins']}")
+        print(f"Losses: {stats['losses']}")
+        print(f"Draws:  {stats['draws']}")
+        print(f"Win Rate: {win_rate:.2f}%")
+        print("="*30)
+
+    return win_rate
+
 
 if __name__ == "__main__":
-    # evaluate_against_random(model_path="othello_dqn_model.pt", num_games=1000)
-    evaluate_against_random(model_path="othello_supervised.pth", num_games=500)
+    model_path = "othello_supervised.pt"
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = OthelloPlayer()
+    try:
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        print(f"Successfully loaded model from {model_path}")
+    except FileNotFoundError:
+        print(f"Error: {model_path} not found. Ensure you have a trained model file.")
+        
+    evaluate_against_random(model, num_games=100, verbose=True)
