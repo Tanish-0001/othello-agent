@@ -8,30 +8,31 @@ import torch.nn as nn
 from torch.optim.lr_scheduler import StepLR
 from collections import deque
 import json
-import time
-
 
 class SnapshotTracker:
     """
     Data structure to manage and evaluate against historical model snapshots.
     """
-
+    
     def __init__(self, device):
         self.device = device
         self.snapshots = []  # List of {episode: int, model_state: dict}
-
+        
     def save_snapshot(self, model, episode):
+      
         snapshot_state = {
             'episode': episode,
             'model_state': {k: v.cpu().clone() for k, v in model.state_dict().items()}
         }
         self.snapshots.append(snapshot_state)
         print(f"Saved snapshot #{len(self.snapshots)} at episode {episode}")
-
+    
     def get_snapshot_count(self):
+       
         return len(self.snapshots)
-
+    
     def load_snapshot_to_model(self, snapshot_model, snapshot_idx):
+       
         if 0 <= snapshot_idx < len(self.snapshots):
             snapshot_model.load_state_dict(self.snapshots[snapshot_idx]['model_state'])
             return self.snapshots[snapshot_idx]['episode']
@@ -40,14 +41,14 @@ class SnapshotTracker:
 
 class Agent:
     def __init__(
-            self,
-            gamma=0.99,
-            epsilon=0.5,
-            lr=0.001,
-            max_memory=10_000,
+            self, 
+            gamma=0.99, 
+            epsilon=0.5, 
+            lr=0.001, 
+            max_memory=10_000, 
             batch_size=128,
             load_pretrained=True
-    ):
+        ):
         self.gamma = gamma
         self.epsilon = epsilon
         self.lr = lr
@@ -61,8 +62,7 @@ class Agent:
         self.model = OthelloPlayer()
 
         if load_pretrained:
-            self.model.load_state_dict(torch.load('best_supervised.pt',
-                                                  weights_only=True))  # Load pre-trained weights from supervised learning
+            self.model.load_state_dict(torch.load('othello_supervised.pt', weights_only=True))  # Load pre-trained weights from supervised learning
 
         self.target_model = OthelloPlayer()
         self.target_model.load_state_dict(self.model.state_dict())
@@ -73,13 +73,13 @@ class Agent:
         backbone_params = list(self.model.conv_in.parameters()) + \
                           list(self.model.gn_in.parameters()) + \
                           list(self.model.res_blocks.parameters())
-
+        
         param_groups = [
             {'params': backbone_params, 'lr': self.lr * 0.1},  # Smaller LR for pre-trained backbone
             {'params': self.model.value.parameters(), 'lr': self.lr},  # Value head
             {'params': self.model.advantage.parameters(), 'lr': self.lr},  # Advantage head
         ]
-
+        
         self.optimizer = torch.optim.Adam(param_groups, lr=self.lr)
         self.scheduler = StepLR(optimizer=self.optimizer, step_size=75_000, gamma=0.5)
 
@@ -91,13 +91,17 @@ class Agent:
         self.target_model.to(self.device)
 
         self.snapshot_tracker = SnapshotTracker(self.device)
+        # opponenet pool and probs for evaluation against random player and pool of past snapshots
+        self.opponent_pool = []   # stores last 4 policies
+        self.opponent_probs = [0.1, 0.2, 0.3, 0.4]
 
         self.logs = {
             "against_random_player": [],
             "against_all_snapshots": []
         }
 
-    def action(self, state, legal_moves, model, use_epsilon_greedy=False) -> int:
+
+    def action(self, state, legal_moves, model, use_epsilon_greedy=False, version="new"):
         if len(legal_moves) == 0:
             raise ValueError("No legal moves available to select an action.")
 
@@ -108,7 +112,7 @@ class Agent:
         tensor_t = state.unsqueeze(0).to(self.device)
         q_values = model(tensor_t).squeeze(0).cpu().detach().numpy()
 
-        mask = state[2, :, :].reshape(64, ).numpy()  # legal moves channel
+        mask = state[2, :, :].reshape(64,).numpy()  # legal moves channel
         q_values[mask == 0] = -np.inf  # set illegal moves q score to -inf
 
         return int(np.argmax(q_values))
@@ -116,7 +120,7 @@ class Agent:
     def replay(self) -> float:
         if len(self.memory) < self.batch_size:
             return -1.0
-
+        
         self.model.train()
         self.target_model.eval()
 
@@ -147,9 +151,13 @@ class Agent:
                 online_q_next[legal_move_mask == 0] = -torch.inf  # set illegal moves target q score to -inf
 
                 best_actions = online_q_next.argmax(1).unsqueeze(1)
-
+                
                 # find the q values of those best actions according to the target model
-                outputs = self.target_model(non_terminal_next_states).detach()
+                # outputs = self.target_model(non_terminal_next_states).detach()
+                # q_next[non_terminal_mask] = outputs.gather(1, best_actions).squeeze(1)
+                opponent = self.sample_weighted_opponent()
+
+                outputs = opponent(non_terminal_next_states).detach()
                 q_next[non_terminal_mask] = outputs.gather(1, best_actions).squeeze(1)
 
         q_target = rewards_tensor + (self.gamma * q_next * (1 - dones_tensor))
@@ -173,12 +181,12 @@ class Agent:
         self.model.eval()
         test_env = Environment()
         rl_score = 0
-
+        
         for ep in range(num_trials):
             test_env.reset()
             test_game = test_env.game
             rl_player = 1 if ep % 2 == 0 else -1
-
+            
             while not test_game.is_game_over():
                 state = test_env.get_state()
                 legal_moves = test_game.get_legal_moves()
@@ -211,33 +219,33 @@ class Agent:
         num_trials=2: one as white, one as black for each snapshot
         """
         self.model.eval()
-
+        
         num_snapshots = self.snapshot_tracker.get_snapshot_count()
         if num_snapshots == 0:
             print("No snapshots available for evaluation.")
             return
-
+        
         # Create a temporary model for loading snapshots
         snapshot_model = OthelloPlayer()
         snapshot_model.to(self.device)
         snapshot_model.eval()
-
+        
         # Store results for all snapshots
         snapshot_results = {
             'current_episode': current_episode,
             'results': []
         }
-
-        print(f"\n{'=' * 60}")
+        
+        print(f"\n{'='*60}")
         print(f"Evaluating Episode {current_episode} against {num_snapshots} snapshots")
-        print(f"{'=' * 60}")
-
+        print(f"{'='*60}")
+        
         for snapshot_idx in range(num_snapshots):
             snapshot_episode = self.snapshot_tracker.load_snapshot_to_model(snapshot_model, snapshot_idx)
-
+            
             test_env = Environment()
             rl_score = 0
-
+            
             for ep in range(num_trials):
                 test_env.reset()
                 test_game = test_env.game
@@ -269,11 +277,41 @@ class Agent:
                 'snapshot_episode': snapshot_episode,
                 'win_rate': win_rate
             })
-
+            
             print(f"  vs Snapshot #{snapshot_idx + 1} (Episode {snapshot_episode}): {win_rate * 100:.1f}%")
-
+        
         self.logs["against_all_snapshots"].append(snapshot_results)
-        print(f"{'=' * 60}\n")
+        print(f"{'='*60}\n")
+  
+    def update_opponent_pool(self):
+
+        clone = OthelloPlayer().to(self.device)
+        clone.load_state_dict(self.model.state_dict())
+        clone.eval()
+
+        self.opponent_pool.append(torch.clone)
+
+        if len(self.opponent_pool) > 4:
+           self.opponent_pool.pop(0)
+    # update opponent pool every 500 episodes and evaluate against it every 100 episodes, 
+    # with probs [0.1, 0.2, 0.3, 0.4] for the 4 most recent snapshots in the pool (if pool is not full, 
+    #distribute probs uniformly among available snapshots)
+
+    def sample_weighted_opponent(self):
+
+        if len(self.opponent_pool) == 0:
+            return self.model
+
+        if len(self.opponent_pool) < 4:
+            return random.choice(self.opponent_pool)
+
+        idx = np.random.choice(
+        len(self.opponent_pool),
+        p=self.opponent_probs)
+
+        return self.opponent_pool[idx]
+    # During training, sample opponent from this pool with the specified probabilities instead of always using the most recent snapshot. 
+    # This allows the agent to be evaluated against a more diverse set of opponents and prevents overfitting to just the latest snapshot.
 
     def train(self, num_episodes=20_000):
         print(f"Training on {self.device}.")
@@ -287,7 +325,7 @@ class Agent:
             env.play_random_moves(num_random_moves)
 
             if ep % 5000 == 0:
-                self.snapshot_tracker.save_snapshot(self.model, ep)
+                self.update_opponent_pool()
 
             if ep % 50 == 0:
                 self.epsilon = max(self.epsilon * 0.99, self.min_epsilon)
@@ -296,21 +334,21 @@ class Agent:
                 self.eval_against_snapshot(current_episode=ep, num_trials=2)
 
             game = env.game
-
+            
             # Pending transitions for each player: {player_id: (state, action, reward)}
-            pending: dict[int, tuple[torch.Tensor, int, float]] = {1: None, -1: None}
+            pending = {1: None, -1: None}
             num_moves = 0
             while not game.is_game_over():
                 current_player = game.current_turn
                 legal_moves = game.get_legal_moves()
-
+                
                 # Handle no legal moves - turn passes to opponent
                 if len(legal_moves) == 0:
                     game.current_turn *= -1
                     continue
 
                 state = env.get_state()
-
+                
                 # Complete the previous pending transition for this player
                 # This works correctly even if this player just moved (consecutive turns)
                 # because `state` is what they see now before their next action
@@ -318,7 +356,21 @@ class Agent:
                     prev_state, prev_action, prev_reward = pending[current_player]
                     self.memory.append((prev_state, prev_action, prev_reward, state, 0))
 
-                action = self.action(state, legal_moves, model=self.model, use_epsilon_greedy=True)
+                # action = self.action(state, legal_moves, model=self.model, use_epsilon_greedy=True)
+                if current_player == 1:
+
+                    action = self.action(
+                        state,
+                        legal_moves,
+                        model=self.model,
+                        use_epsilon_greedy=True)
+                else:
+                    opponent = self.sample_weighted_opponent()
+                    action = self.action(
+                        state,
+                        legal_moves,
+                        model=opponent,
+                        use_epsilon_greedy=False)
                 next_state, reward, done = env.step(action=action)
                 num_moves += 1
 
@@ -346,18 +398,15 @@ class Agent:
 
             if ep % 500 == 0:
                 self.target_model.load_state_dict(self.model.state_dict())
-
+        
         torch.save(self.model.state_dict(), "othello_dqn_model.pt")
         with open("training_logs.json", "w") as f:
             json.dump(self.logs, f, indent=2)
 
-
-agent = Agent(batch_size=256, lr=1e-4, max_memory=100_000)
 try:
-    start = time.perf_counter()
+    agent = Agent(batch_size=256, lr=1e-4, max_memory=100_000)
     agent.train(num_episodes=50_000)
-    print(f"Training took {time.perf_counter() - start} seconds.")
 except KeyboardInterrupt:
     torch.save(agent.model.state_dict(), "othello_dqn_model_interrupted.pt")
     with open("training_logs.json", "w") as f:
-        json.dump(agent.logs, f, indent=2)
+            json.dump(agent.logs, f, indent=2)
