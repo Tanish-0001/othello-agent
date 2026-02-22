@@ -243,36 +243,56 @@ class Agent:
         for snapshot_idx in range(num_snapshots):
             snapshot_episode = self.snapshot_tracker.load_snapshot_to_model(snapshot_model, snapshot_idx)
             
-            test_env = Environment()
             rl_score = 0
+            num_pairs = num_trials // 2
             
-            for ep in range(num_trials):
-                test_env.reset()
-                test_game = test_env.game
-                rl_player = 1 if ep % 2 == 0 else -1
+            # Create a loop for each pair of randomly generated boards
+            for pair in range(num_pairs):
+                setup_env = Environment()
+                
+                num_random = random.randint(4, 6)
+                setup_env.play_random_moves(num_random)
+                
+                saved_board = setup_env.game.board.copy()
+                saved_turn = setup_env.game.current_turn
+                
+                # Play 2 games
+                for ep in range(2):
+                    test_env = Environment()
+                    test_env.reset()
+                    
+                    test_env.game.board = saved_board.copy()
+                    test_env.game.current_turn = saved_turn
+                    test_game = test_env.game
+                    
+                    # ep 0 -> Current Model is Black (1)
+                    # ep 1 -> Current Model is White (-1)
+                    rl_player = 1 if ep == 0 else -1
 
-                while not test_game.is_game_over():
-                    state = test_env.get_state()
-                    legal_moves = test_game.get_legal_moves()
-
-                    if len(legal_moves) == 0:
-                        test_game.current_turn *= -1
+                    while not test_game.is_game_over():
+                        state = test_env.get_state()
                         legal_moves = test_game.get_legal_moves()
 
-                    if test_game.current_turn == rl_player:
-                        action = self.action(state, legal_moves, model=self.model, use_epsilon_greedy=False)
-                    else:
-                        action = self.action(state, legal_moves, model=snapshot_model, use_epsilon_greedy=False)
+                        if len(legal_moves) == 0:
+                            test_game.current_turn *= -1
+                            legal_moves = test_game.get_legal_moves()
 
-                    test_env.step(action=action)
+                        # The active player takes their turn
+                        if test_game.current_turn == rl_player:
+                            action = self.action(state, legal_moves, model=self.model, use_epsilon_greedy=False)
+                        else:
+                            action = self.action(state, legal_moves, model=snapshot_model, use_epsilon_greedy=False)
 
-                winner = test_game.get_winner_id()
-                if winner == rl_player:
-                    rl_score += 1
-                elif winner == 0:
-                    rl_score += 0.5
+                        test_env.step(action=action)
 
-            win_rate = (rl_score / num_trials)
+                    # Tally the score
+                    winner = test_game.get_winner_id()
+                    if winner == rl_player:
+                        rl_score += 1
+                    elif winner == 0:
+                        rl_score += 0.5
+
+            win_rate = (rl_score / (num_pairs * 2))
             snapshot_results['results'].append({
                 'snapshot_episode': snapshot_episode,
                 'win_rate': win_rate
